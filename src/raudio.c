@@ -340,39 +340,41 @@ typedef enum {
 
 // Audio buffer struct
 struct rAudioBuffer {
-    ma_data_converter converter;    // Audio data converter
+    ma_data_converter converter;              // Audio data converter
 
-    AudioCallback callback;         // Audio buffer callback for buffer filling on audio threads
-    void *callbackContext;          // Audio buffer callback context to be passed on callback
-    rAudioProcessor *processor;     // Audio processor
+    AudioCallback callback;                   // Audio buffer callback for buffer filling on audio threads
+    AudioContextCallback callbackWithContext; // Audio buffer callback for buffer filling on audio threads with context
+    void *callbackContext;                    // Audio buffer callback context to be passed on callback
+    rAudioProcessor *processor;               // Audio processor
 
-    float volume;                   // Audio buffer volume
-    float pitch;                    // Audio buffer pitch
-    float pan;                      // Audio buffer pan (0.0f to 1.0f)
+    float volume;                             // Audio buffer volume
+    float pitch;                              // Audio buffer pitch
+    float pan;                                // Audio buffer pan (0.0f to 1.0f)
 
-    bool playing;                   // Audio buffer state: AUDIO_PLAYING
-    bool paused;                    // Audio buffer state: AUDIO_PAUSED
-    bool looping;                   // Audio buffer looping, default to true for AudioStreams
-    int usage;                      // Audio buffer usage mode: STATIC or STREAM
+    bool playing;                             // Audio buffer state: AUDIO_PLAYING
+    bool paused;                              // Audio buffer state: AUDIO_PAUSED
+    bool looping;                             // Audio buffer looping, default to true for AudioStreams
+    int usage;                                // Audio buffer usage mode: STATIC or STREAM
 
-    bool isSubBufferProcessed[2];   // SubBuffer processed (virtual double buffer)
-    unsigned int sizeInFrames;      // Total buffer size in frames
-    unsigned int frameCursorPos;    // Frame cursor position
-    unsigned int framesProcessed;   // Total frames processed in this buffer (required for play timing)
+    bool isSubBufferProcessed[2];             // SubBuffer processed (virtual double buffer)
+    unsigned int sizeInFrames;                // Total buffer size in frames
+    unsigned int frameCursorPos;              // Frame cursor position
+    unsigned int framesProcessed;             // Total frames processed in this buffer (required for play timing)
 
-    unsigned char *data;            // Data buffer, on music stream keeps filling
+    unsigned char *data;                      // Data buffer, on music stream keeps filling
 
-    rAudioBuffer *next;             // Next audio buffer on the list
-    rAudioBuffer *prev;             // Previous audio buffer on the list
+    rAudioBuffer *next;                       // Next audio buffer on the list
+    rAudioBuffer *prev;                       // Previous audio buffer on the list
 };
 
 // Audio processor struct
 // NOTE: Useful to apply effects to an AudioBuffer
 struct rAudioProcessor {
-    AudioCallback process;          // Processor callback function
-    void *context;                  // Processor callback context
-    rAudioProcessor *next;          // Next audio processor on the list
-    rAudioProcessor *prev;          // Previous audio processor on the list
+    AudioCallback process;                   // Processor callback function
+    AudioContextCallback processWithContext; // Processor callback with context function
+    void *context;                           // Processor callback context
+    rAudioProcessor *next;                   // Next audio processor on the list
+    rAudioProcessor *prev;                   // Previous audio processor on the list
 };
 
 #define AudioBuffer rAudioBuffer    // HACK: To avoid CoreAudio (macOS) symbol collision
@@ -2212,11 +2214,21 @@ void SetAudioStreamBufferSizeDefault(int size)
 }
 
 // Audio thread callback to request new data
-void SetAudioStreamCallback(AudioStream stream, AudioCallback callback, void *context)
+void SetAudioStreamCallback(AudioStream stream, AudioCallback callback)
 {
     if (stream.buffer != NULL)
     {
         stream.buffer->callback = callback;
+        stream.buffer->callbackContext = 0;
+    }
+}
+
+// Audio thread callback to request new data with context
+void SetAudioStreamCallbackEx(AudioStream stream, AudioContextCallback callback, void *context)
+{
+    if (stream.buffer != NULL)
+    {
+        stream.buffer->callbackWithContext = callback;
         stream.buffer->callbackContext = context;
     }
 }
@@ -2224,12 +2236,37 @@ void SetAudioStreamCallback(AudioStream stream, AudioCallback callback, void *co
 // Add processor to audio stream. Contrary to buffers, the order of processors is important.
 // The new processor must be added at the end. As there aren't supposed to be a lot of processors attached to
 // a given stream, we iterate through the list to find the end. That way we don't need a pointer to the last element.
-void AttachAudioStreamProcessor(AudioStream stream, AudioCallback process, void *context)
+void AttachAudioStreamProcessor(AudioStream stream, AudioCallback process)
 {
     ma_mutex_lock(&AUDIO.System.lock);
 
     rAudioProcessor *processor = (rAudioProcessor *)RL_CALLOC(1, sizeof(rAudioProcessor));
     processor->process = process;
+    processor->context = 0;
+
+    rAudioProcessor *last = stream.buffer->processor;
+
+    while (last && last->next)
+    {
+        last = last->next;
+    }
+    if (last)
+    {
+        processor->prev = last;
+        last->next = processor;
+    }
+    else stream.buffer->processor = processor;
+
+    ma_mutex_unlock(&AUDIO.System.lock);
+}
+
+// Same as AttachAudioStreamProcessor. But introduces a context pointer to be passed to the callback function
+void AttachAudioStreamProcessorEx(AudioStream stream, AudioContextCallback process, void *context)
+{
+    ma_mutex_lock(&AUDIO.System.lock);
+
+    rAudioProcessor *processor = (rAudioProcessor *)RL_CALLOC(1, sizeof(rAudioProcessor));
+    processor->processWithContext = process;
     processor->context = context;
 
     rAudioProcessor *last = stream.buffer->processor;
@@ -2275,15 +2312,67 @@ void DetachAudioStreamProcessor(AudioStream stream, AudioCallback process)
     ma_mutex_unlock(&AUDIO.System.lock);
 }
 
+// Remove processor from audio stream
+void DetachAudioStreamProcessorEx(AudioStream stream, AudioContextCallback process)
+{
+    ma_mutex_lock(&AUDIO.System.lock);
+
+    rAudioProcessor *processor = stream.buffer->processor;
+
+    while (processor)
+    {
+        rAudioProcessor *next = processor->next;
+        rAudioProcessor *prev = processor->prev;
+
+        if (processor->processWithContext == process)
+        {
+            if (stream.buffer->processor == processor) stream.buffer->processor = next;
+            if (prev) prev->next = next;
+            if (next) next->prev = prev;
+
+            RL_FREE(processor);
+        }
+
+        processor = next;
+    }
+
+    ma_mutex_unlock(&AUDIO.System.lock);
+}
+
 // Add processor to audio pipeline. Order of processors is important
 // Works the same way as {Attach,Detach}AudioStreamProcessor() functions, except
 // these two work on the already mixed output just before sending it to the sound hardware
-void AttachAudioMixedProcessor(AudioCallback process, void *context)
+void AttachAudioMixedProcessor(AudioCallback process)
 {
     ma_mutex_lock(&AUDIO.System.lock);
 
     rAudioProcessor *processor = (rAudioProcessor *)RL_CALLOC(1, sizeof(rAudioProcessor));
     processor->process = process;
+    processor->context = 0;
+
+    rAudioProcessor *last = AUDIO.mixedProcessor;
+
+    while (last && last->next)
+    {
+        last = last->next;
+    }
+    if (last)
+    {
+        processor->prev = last;
+        last->next = processor;
+    }
+    else AUDIO.mixedProcessor = processor;
+
+    ma_mutex_unlock(&AUDIO.System.lock);
+}
+
+// Same as AttachAudioMixedProcessor. But introduces a context pointer to be passed to the callback function
+void AttachAudioMixedProcessorEx(AudioContextCallback process, void *context)
+{
+    ma_mutex_lock(&AUDIO.System.lock);
+
+    rAudioProcessor *processor = (rAudioProcessor *)RL_CALLOC(1, sizeof(rAudioProcessor));
+    processor->processWithContext = process;
     processor->context = context;
 
     rAudioProcessor *last = AUDIO.mixedProcessor;
@@ -2329,6 +2418,33 @@ void DetachAudioMixedProcessor(AudioCallback process)
     ma_mutex_unlock(&AUDIO.System.lock);
 }
 
+// Remove processor from audio pipeline
+void DetachAudioMixedProcessorEx(AudioContextCallback process)
+{
+    ma_mutex_lock(&AUDIO.System.lock);
+
+    rAudioProcessor *processor = AUDIO.mixedProcessor;
+
+    while (processor)
+    {
+        rAudioProcessor *next = processor->next;
+        rAudioProcessor *prev = processor->prev;
+
+        if (processor->processWithContext == process)
+        {
+            if (AUDIO.mixedProcessor == processor) AUDIO.mixedProcessor = next;
+            if (prev) prev->next = next;
+            if (next) next->prev = prev;
+
+            RL_FREE(processor);
+        }
+
+        processor = next;
+    }
+
+    ma_mutex_unlock(&AUDIO.System.lock);
+}
+
 
 //----------------------------------------------------------------------------------
 // Module specific Functions Definition
@@ -2346,7 +2462,12 @@ static ma_uint32 ReadAudioBufferFramesInInternalFormat(AudioBuffer *audioBuffer,
     // Using audio buffer callback
     if (audioBuffer->callback)
     {
-        audioBuffer->callback(framesOut, frameCount, audioBuffer->callbackContext);
+        audioBuffer->callback(framesOut, frameCount);
+        audioBuffer->framesProcessed += frameCount;
+
+        return frameCount;
+    } else if (audioBuffer->callbackWithContext) {
+        audioBuffer->callbackWithContext(framesOut, frameCount, audioBuffer->callbackContext);
         audioBuffer->framesProcessed += frameCount;
 
         return frameCount;
@@ -2529,7 +2650,11 @@ static void OnSendAudioDataToDevice(ma_device *pDevice, void *pFramesOut, const 
                         rAudioProcessor *processor = audioBuffer->processor;
                         while (processor)
                         {
-                            processor->process(framesIn, framesJustRead, processor->context);
+                            if (processor->process) {
+                                processor->process(framesIn, framesJustRead);
+                            } else if (processor->processWithContext) {
+                                processor->processWithContext(framesIn, framesJustRead, processor->context);
+                            }
                             processor = processor->next;
                         }
 
@@ -2573,7 +2698,11 @@ static void OnSendAudioDataToDevice(ma_device *pDevice, void *pFramesOut, const 
     rAudioProcessor *processor = AUDIO.mixedProcessor;
     while (processor)
     {
-        processor->process(pFramesOut, frameCount, processor->context);
+        if (processor->process) {
+            processor->process(pFramesOut, frameCount);
+        } else if (processor->processWithContext) {
+            processor->processWithContext(pFramesOut, frameCount, processor->context);
+        }
         processor = processor->next;
     }
 

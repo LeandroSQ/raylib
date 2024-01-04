@@ -24,8 +24,8 @@ static unsigned int delayWriteIndex = 0;
 //------------------------------------------------------------------------------------
 // Module Functions Declaration
 //------------------------------------------------------------------------------------
-static void AudioProcessEffectLPF(void *buffer, unsigned int frames, void *context);   // Audio effect: lowpass filter
-static void AudioProcessEffectDelay(void *buffer, unsigned int frames, void *context); // Audio effect: delay
+static void AudioProcessEffectLPF(void *buffer, unsigned int frames);   // Audio effect: lowpass filter
+static void AudioProcessEffectDelay(void *buffer, unsigned int frames); // Audio effect: delay
 
 //------------------------------------------------------------------------------------
 // Program main entry point
@@ -85,7 +85,7 @@ int main(void)
         if (IsKeyPressed(KEY_F))
         {
             enableEffectLPF = !enableEffectLPF;
-            if (enableEffectLPF) AttachAudioStreamProcessor(music.stream, AudioProcessEffectLPF, 0);
+            if (enableEffectLPF) AttachAudioStreamProcessor(music.stream, AudioProcessEffectLPF);
             else DetachAudioStreamProcessor(music.stream, AudioProcessEffectLPF);
         }
 
@@ -93,7 +93,7 @@ int main(void)
         if (IsKeyPressed(KEY_D))
         {
             enableEffectDelay = !enableEffectDelay;
-            if (enableEffectDelay) AttachAudioStreamProcessor(music.stream, AudioProcessEffectDelay, 0);
+            if (enableEffectDelay) AttachAudioStreamProcessor(music.stream, AudioProcessEffectDelay);
             else DetachAudioStreamProcessor(music.stream, AudioProcessEffectDelay);
         }
 
@@ -143,7 +143,7 @@ int main(void)
 // Module Functions Definition
 //------------------------------------------------------------------------------------
 // Audio effect: lowpass filter
-static void AudioProcessEffectLPF(void *buffer, unsigned int frames, void *context)
+static void AudioProcessEffectLPF(void *buffer, unsigned int frames)
 {
     static float low[2] = { 0.0f, 0.0f };
     static const float cutoff = 70.0f / 44100.0f; // 70 Hz lowpass filter
@@ -164,7 +164,7 @@ static void AudioProcessEffectLPF(void *buffer, unsigned int frames, void *conte
 }
 
 // Audio effect: delay
-static void AudioProcessEffectDelay(void *buffer, unsigned int frames, void *context)
+static void AudioProcessEffectDelay(void *buffer, unsigned int frames)
 {
     for (unsigned int i = 0; i < frames*2; i += 2)
     {

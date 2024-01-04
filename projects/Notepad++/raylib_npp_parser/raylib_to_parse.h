@@ -623,6 +623,7 @@ RLAPI RayCollision GetRayCollisionQuad(Ray ray, Vector3 p1, Vector3 p2, Vector3 
 // Audio Loading and Playing Functions (Module: audio)
 //------------------------------------------------------------------------------------
 typedef void (*AudioCallback)(void *bufferData, unsigned int frames);
+typedef void (*AudioContextCallback)(void *bufferData, unsigned int frames, void *context);
 
 // Audio device management functions
 RLAPI void InitAudioDevice(void);                                     // Initialize audio device and context
@@ -694,10 +695,15 @@ RLAPI void SetAudioStreamVolume(AudioStream stream, float volume);    // Set vol
 RLAPI void SetAudioStreamPitch(AudioStream stream, float pitch);      // Set pitch for audio stream (1.0 is base level)
 RLAPI void SetAudioStreamPan(AudioStream stream, float pan);          // Set pan for audio stream (0.5 is centered)
 RLAPI void SetAudioStreamBufferSizeDefault(int size);                 // Default size for new audio streams
-RLAPI void SetAudioStreamCallback(AudioStream stream, AudioCallback callback, void *context); // Audio thread callback to request new data
+RLAPI void SetAudioStreamCallback(AudioStream stream, AudioCallback callback); // Audio thread callback to request new data
+RLAPI void SetAudioStreamCallbackEx(AudioStream stream, AudioContextCallback callback, void *context); // Audio thread callback to request new data. Passing the context pointer as a parameter to the callback.
 
-RLAPI void AttachAudioStreamProcessor(AudioStream stream, AudioCallback processor, void *context); // Attach audio stream processor to stream, receives the samples as <float>s
+RLAPI void AttachAudioStreamProcessor(AudioStream stream, AudioCallback processor); // Attach audio stream processor to stream, receives the samples as <float>s
+RLAPI void AttachAudioStreamProcessorEx(AudioStream stream, AudioContextCallback processor, void *context); // Attach audio stream processor to stream, receives the samples as <float>s. Passing the context pointer as a parameter to the callback.
 RLAPI void DetachAudioStreamProcessor(AudioStream stream, AudioCallback processor); // Detach audio stream processor from stream
+RLAPI void DetachAudioStreamProcessorEx(AudioStream stream, AudioContextCallback processor); // Detach audio stream processor from stream
 
-RLAPI void AttachAudioMixedProcessor(AudioCallback processor, void *context); // Attach audio stream processor to the entire audio pipeline, receives the samples as <float>s
+RLAPI void AttachAudioMixedProcessor(AudioCallback processor); // Attach audio stream processor to the entire audio pipeline, receives the samples as <float>s
+RLAPI void AttachAudioMixedProcessorEx(AudioContextCallback processor, void *context); // Attach audio stream processor to the entire audio pipeline, receives the samples as <float>s. Passing the context pointer as a parameter to the callback.
 RLAPI void DetachAudioMixedProcessor(AudioCallback processor); // Detach audio stream processor from the entire audio pipeline
+RLAPI void DetachAudioMixedProcessorEx(AudioContextCallback processor); // Detach audio stream processor from the entire audio pipeline
